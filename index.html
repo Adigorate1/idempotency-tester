@@ -1333,11 +1333,13 @@ details.a-disclosure[open] > summary::before {
       <thead>
         <tr>
           <th scope="col" data-numeric>#</th>
+          <th scope="col">Time sent</th>
           <th scope="col">Key sent</th>
           <th scope="col">Body sent</th>
           <th scope="col">Status</th>
           <th scope="col" data-numeric>Latency</th>
           <th scope="col">Response</th>
+          <th scope="col">Copy</th>
         </tr>
       </thead>
       <tbody id="t-rows"></tbody>
@@ -1389,15 +1391,27 @@ details.a-disclosure[open] > summary::before {
     });
   }
 
-  function row(n, key, sentBody, status, latency, resp, bad) {
+  function fmtTime(d) {
+    var p = function (x, l) { return String(x).padStart(l || 2, "0"); };
+    return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) +
+      "." + p(d.getMilliseconds(), 3);
+  }
+
+  function row(n, sentAt, key, sentBody, status, latency, resp, bad) {
     var tr = document.createElement("tr");
     tr.innerHTML =
       "<td data-numeric>" + n + "</td>" +
+      '<td><span class="t-key" title="' + esc(sentAt.toISOString()) + '">' +
+        fmtTime(sentAt) + "</span></td>" +
       '<td><span class="t-key">' + esc(key || "") + "</span></td>" +
       '<td><pre class="t-resp">' + esc(sentBody || "") + "</pre></td>" +
       '<td class="' + (bad ? "t-status-bad" : "t-status-ok") + '">' + esc(status) + "</td>" +
       "<td data-numeric>" + (latency == null ? "—" : latency + " ms") + "</td>" +
-      '<td><pre class="t-resp">' + esc(resp || "") + "</pre></td>";
+      '<td><pre class="t-resp">' + esc(resp || "") + "</pre></td>" +
+      '<td><button type="button" class="t-btn t-btn--stop t-copy" data-json="' +
+        esc(JSON.stringify({n: n, time_sent: sentAt.toISOString(), key: key,
+          body_sent: sentBody, status: status, latency_ms: latency,
+          response: resp}, null, 2)) + '">JSON</button></td>';
     return tr;
   }
 
@@ -1496,6 +1510,7 @@ details.a-disclosure[open] > summary::before {
           headers["Content-Type"] = "application/json";
       }
 
+      var sentAt = new Date();
       var t0 = performance.now(), status, resp, bad, lat;
       try {
         var r = await fetch(u, init);
@@ -1512,7 +1527,7 @@ details.a-disclosure[open] > summary::before {
       }
       sent++;
       if (bad) fail++; else { ok++; lats.push(lat); }
-      tbody.appendChild(row(i, key, sentBody, status, lat, resp, bad));
+      tbody.appendChild(row(i, sentAt, key, sentBody, status, lat, resp, bad));
       $("t-m-sent").textContent = sent;
       $("t-m-ok").textContent = ok;
       $("t-m-fail").textContent = fail;
@@ -1525,6 +1540,15 @@ details.a-disclosure[open] > summary::before {
     $("t-send").disabled = false;
     $("t-stop").hidden = true;
   }
+
+  $("t-rows").addEventListener("click", function (e) {
+    var btn = e.target.closest(".t-copy");
+    if (!btn) return;
+    if (navigator.clipboard)
+      navigator.clipboard.writeText(btn.getAttribute("data-json") || "");
+    btn.textContent = "Copied";
+    setTimeout(function () { btn.textContent = "JSON"; }, 1200);
+  });
 
   $("t-send").addEventListener("click", sendAll);
   $("t-stop").addEventListener("click", function () { stopped = true; });

@@ -10,8 +10,8 @@ swallows your repeat test requests. Every request is made to look brand-new:
 - `{{uuid}}`, `{{ts}}` (unix ms) and `{{n}}` (request number) placeholders in
   your headers/body are substituted per request — use these if the app dedupes
   on body content rather than a key header
-- Fire N requests with a configurable delay; per-call status, latency and
-  response are shown in a results table
+- Fire N requests with a configurable delay; per-call send time, status,
+  latency and response are shown in a results table
 
 ## Two ways to run it
 

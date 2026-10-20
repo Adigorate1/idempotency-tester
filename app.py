@@ -15,6 +15,7 @@ import ssl
 import subprocess
 import time
 import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib import request as urlreq
 from urllib import error as urlerr
@@ -121,7 +122,7 @@ Fixed headers you set that collide with idempotency headers are overwritten per 
 </details>
 <div id="summary"></div>
 <table id="results" hidden>
-  <thead><tr><th>#</th><th>Key sent</th><th>Body sent</th><th>Status</th><th>Latency</th><th>Response</th></tr></thead>
+  <thead><tr><th>#</th><th>Time sent</th><th>Key sent</th><th>Body sent</th><th>Status</th><th>Latency</th><th>Response</th><th>Copy</th></tr></thead>
   <tbody></tbody>
 </table>
 
@@ -168,20 +169,34 @@ function render(data) {
     if (!r.error && r.status < 400) pass++;
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${r.n}</td>
+      <td><code title="${r.sent_at || ""}">${fmtTime(r.sent_at)}</code></td>
       <td><code>${r.idempotency_key || ""}</code></td>
       <td><pre>${escapeHtml(r.body_sent || "")}</pre></td>
       <td class="${cls}">${r.error ? "ERR" : r.status}</td>
       <td>${r.latency_ms ?? ""} ms</td>
-      <td><pre>${escapeHtml(r.error || r.response_preview || "")}</pre></td>`;
+      <td><pre>${escapeHtml(r.error || r.response_preview || "")}</pre></td>
+      <td><button class="ghost t-copy" data-json="${escapeHtml(JSON.stringify({n: r.n, time_sent: r.sent_at, key: r.idempotency_key, body_sent: r.body_sent, status: r.error ? "ERR" : r.status, latency_ms: r.latency_ms, response: r.error || r.response_preview}, null, 2))}">JSON</button></td>`;
     tb.appendChild(tr);
   });
   $("results").hidden = false;
   $("summary").textContent = `${pass}/${data.results.length} succeeded`;
 }
+function fmtTime(iso) {
+  if (!iso) return "";
+  const d = new Date(iso), p = (x, l) => String(x).padStart(l || 2, "0");
+  return p(d.getHours()) + ":" + p(d.getMinutes()) + ":" + p(d.getSeconds()) + "." + p(d.getMilliseconds(), 3);
+}
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 }
-function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\''") + "'"; }
+document.querySelector("#results tbody").addEventListener("click", e => {
+  const btn = e.target.closest(".t-copy");
+  if (!btn) return;
+  if (navigator.clipboard) navigator.clipboard.writeText(btn.getAttribute("data-json") || "");
+  btn.textContent = "Copied";
+  setTimeout(() => btn.textContent = "JSON", 1200);
+});
+function shellQuote(s) { return "'" + String(s).replace(/'/g, "'\\\\''") + "'"; }
 const IDEMP_HEADERS = ["Idempotency-Key","X-Idempotency-Key","X-Request-Id","X-Correlation-Id","Request-Id"];
 function subst(tpl, n, key) {
   return tpl.split("{{uuid}}").join(key).split("{{ts}}").join(String(Date.now())).split("{{n}}").join(String(n));
@@ -198,16 +213,16 @@ $("curl-btn").onclick = () => {
   Object.keys(extra).forEach(k => hs[k] = subst(String(extra[k]), 1, key));
   IDEMP_HEADERS.forEach(h => hs[h] = key);
   let cmd = `curl -i -X ${method} `;
-  cmd += Object.keys(hs).map(k => `-H ${shellQuote(k + ": " + hs[k])}`).join(" \\\n  ");
+  cmd += Object.keys(hs).map(k => `-H ${shellQuote(k + ": " + hs[k])}`).join(" \\\\\\n  ");
   if (method !== "GET" && method !== "DELETE" && $("body").value)
-    cmd += ` \\\n  --data ${shellQuote(subst($("body").value, 1, key))}`;
-  cmd += ` \\\n  ${shellQuote(u)}`;
+    cmd += ` \\\\\n  --data ${shellQuote(subst($("body").value, 1, key))}`;
+  cmd += ` \\\\\n  ${shellQuote(u)}`;
   $("curlbox").value = cmd;
   if (navigator.clipboard) navigator.clipboard.writeText(cmd);
 };
 $("curl-import").onclick = () => {
-  const tokens = ($("curlbox").value.replace(/\\\n/g, " ").match(/'([^'\\]|\\.)*'|"([^"\\]|\\.)*"|\S+/g) || [])
-    .map(t => t.length > 1 && (t[0] === "'" || t[0] === '"') ? t.slice(1, -1).replace(/\\(.)/g, "$1") : t);
+  const tokens = ($("curlbox").value.replace(/\\\\\\\\$/gm, " ").match(/'([^'\\\\]|\\\\.)*'|"([^"\\\\]|\\\\.)*"|\S+/g) || [])
+    .map(t => t.length > 1 && (t[0] === "'" || t[0] === '"') ? t.slice(1, -1).replace(/\\\\(.)/g, "$1") : t);
   let u = "", m = "", hs = {}, b = "";
   for (let i = 0; i < tokens.length; i++) {
     const t = tokens[i];
@@ -279,6 +294,7 @@ def substitute(template: str, n: int, key: str) -> str:
 def send_one(target_url: str, method: str, headers: dict,
              body_template: str, n: int, timeout: float):
     key = str(uuid.uuid4())
+    sent_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
     # Cache-busting query param so caches/proxies treat it as new.
     sep = "&" if parse.urlsplit(target_url).query else "?"
     url = f"{target_url}{sep}_cb={key}"
@@ -306,10 +322,12 @@ def send_one(target_url: str, method: str, headers: dict,
         text = e.read(8192).decode("utf-8", "replace")
         status = e.code
     except Exception as e:
-        return {"n": n, "idempotency_key": key, "body_sent": body_sent, "error": str(e)}
+        return {"n": n, "sent_at": sent_at, "idempotency_key": key,
+                "body_sent": body_sent, "error": str(e)}
     latency = round((time.monotonic() - start) * 1000)
     return {
         "n": n,
+        "sent_at": sent_at,
         "idempotency_key": key,
         "body_sent": body_sent,
         "status": status,
