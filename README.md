@@ -31,6 +31,28 @@ python3 app.py          # stdlib only, no installs
 The UI is served locally and requests are forwarded server-side, so CORS does
 not apply. Use this when your app blocks cross-origin browser calls.
 
+#### Testing an app in an Android emulator
+
+No certificate, proxy config, or manual port forwarding needed. With
+`adb` (Android platform-tools) on your PATH and an emulator running:
+
+1. In the **Emulator** section of `app.py`'s UI, enter the port your app
+   listens on inside the emulator (e.g. `8080`).
+2. Click **Connect & fill Target URL** — the tool runs `adb forward`
+   to a free localhost port and fills the Target URL automatically.
+3. Send requests as normal; they reach the emulator over plain HTTP.
+
+Works over HTTP only — a deliberate choice so no CA cert or app
+`network_security_config` changes are required.
+
+## Extra features
+
+- **Breaking point**: checkbox stops the run on the first failed request
+  (network error or status ≥ 400).
+- **Body sent column**: shows the exact resolved JSON body each POST sent.
+- **cURL import/export**: paste a `curl` command to auto-fill the form, or
+  click **Copy as cURL** to export the configured request with a fresh key.
+
 ## Notes
 
 - Point it only at apps you own or are authorized to test.

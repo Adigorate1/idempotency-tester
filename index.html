@@ -1301,7 +1301,21 @@ details.a-disclosure[open] > summary::before {
     <div class="t-actions">
       <button type="button" class="t-btn" id="t-send">Send requests</button>
       <button type="button" class="t-btn t-btn--stop" id="t-stop" hidden>Stop</button>
+      <button type="button" class="t-btn t-btn--stop" id="t-curl">Copy as cURL</button>
     </div>
+    <label class="t-field" style="margin-top: 14px;"><span>Breaking point</span>
+      <span class="t-hint" style="display: flex; gap: 8px; align-items: center; margin-top: 0;">
+        <input id="t-break" type="checkbox" style="width: auto;">
+        Stop the run on the first failed request (network error or status ≥ 400)
+      </span>
+    </label>
+    <details class="t-field">
+      <summary class="t-hint" style="cursor: pointer;">Import / export a bash cURL command</summary>
+      <textarea id="t-curlbox" rows="4" placeholder="Paste a curl command here and click Import, or click Copy as cURL to export the configured request"></textarea>
+      <div class="t-actions" style="margin-top: 8px;">
+        <button type="button" class="t-btn t-btn--stop" id="t-curl-import">Import curl</button>
+      </div>
+    </details>
   </div>
 </section>
 
@@ -1320,6 +1334,7 @@ details.a-disclosure[open] > summary::before {
         <tr>
           <th scope="col" data-numeric>#</th>
           <th scope="col">Key sent</th>
+          <th scope="col">Body sent</th>
           <th scope="col">Status</th>
           <th scope="col" data-numeric>Latency</th>
           <th scope="col">Response</th>
@@ -1339,6 +1354,8 @@ details.a-disclosure[open] > summary::before {
     server-side and has no CORS limits. Both files are delivered together.
     If your app dedupes on body content rather than a key header, put
     <code>{{uuid}}</code> in the body template.
+    Testing an app inside an Android emulator? Use <code>app.py</code> — its Emulator
+    section runs <code>adb forward</code> for you, no certificate or proxy setup needed.
   </div>
 </section>
 
@@ -1372,15 +1389,62 @@ details.a-disclosure[open] > summary::before {
     });
   }
 
-  function row(n, key, status, latency, resp, bad) {
+  function row(n, key, sentBody, status, latency, resp, bad) {
     var tr = document.createElement("tr");
     tr.innerHTML =
       "<td data-numeric>" + n + "</td>" +
       '<td><span class="t-key">' + esc(key || "") + "</span></td>" +
+      '<td><pre class="t-resp">' + esc(sentBody || "") + "</pre></td>" +
       '<td class="' + (bad ? "t-status-bad" : "t-status-ok") + '">' + esc(status) + "</td>" +
       "<td data-numeric>" + (latency == null ? "—" : latency + " ms") + "</td>" +
       '<td><pre class="t-resp">' + esc(resp || "") + "</pre></td>";
     return tr;
+  }
+
+  function shellQuote(s) {
+    return "'" + String(s).replace(/'/g, "'\\''") + "'";
+  }
+
+  function buildCurl(url, method, headersObj, bodyTpl, n, key) {
+    var u = url + (url.indexOf("?") === -1 ? "?" : "&") + "_cb=" + encodeURIComponent(key);
+    var parts = ["curl -i -X " + method];
+    var headers = {};
+    Object.keys(headersObj).forEach(function (k) {
+      headers[k] = substitute(String(headersObj[k]), n, key);
+    });
+    IDEMPOTENCY_HEADERS.forEach(function (h) { headers[h] = key; });
+    Object.keys(headers).forEach(function (k) {
+      parts.push("-H " + shellQuote(k + ": " + headers[k]));
+    });
+    if (method !== "GET" && method !== "DELETE" && bodyTpl) {
+      parts.push("--data " + shellQuote(substitute(bodyTpl, n, key)));
+    }
+    parts.push(shellQuote(u));
+    return parts.join(" \\\n  ");
+  }
+
+  function parseCurl(text) {
+    var tokens = (text.match(/'([^'\\]|\\.)*'|"([^"\\]|\\.)*"|\S+/g) || [])
+      .map(function (t) {
+        if (t.length > 1 && (t[0] === "'" || t[0] === '"'))
+          return t.slice(1, -1).replace(/\\(.)/g, "$1");
+        return t;
+      });
+    var out = { url: "", method: "", headers: {}, body: "" };
+    for (var i = 0; i < tokens.length; i++) {
+      var t = tokens[i];
+      if (t === "curl" || t === "-i" || t === "-s" || t === "-v" || t === "-L") continue;
+      if (t === "-X" || t === "--request") { out.method = (tokens[++i] || "").toUpperCase(); continue; }
+      if (t === "-H" || t === "--header") {
+        var h = tokens[++i] || "", c = h.indexOf(":");
+        if (c > 0) out.headers[h.slice(0, c).trim()] = h.slice(c + 1).trim();
+        continue;
+      }
+      if (t === "-d" || t === "--data" || t === "--data-raw" || t === "--data-binary" ||
+          t === "--json" || t === "--data-ascii") { out.body = tokens[++i] || ""; continue; }
+      if (/^https?:\/\//i.test(t)) out.url = t;
+    }
+    return out;
   }
 
   function median(nums) {
@@ -1424,8 +1488,10 @@ details.a-disclosure[open] > summary::before {
       IDEMPOTENCY_HEADERS.forEach(function (h) { headers[h] = key; });
 
       var init = { method: method, headers: headers, cache: "no-store" };
+      var sentBody = "";
       if (method !== "GET" && method !== "DELETE" && tpl) {
-        init.body = substitute(tpl, i, key);
+        sentBody = substitute(tpl, i, key);
+        init.body = sentBody;
         if (!Object.keys(headers).some(function (k) { return k.toLowerCase() === "content-type"; }))
           headers["Content-Type"] = "application/json";
       }
@@ -1446,11 +1512,12 @@ details.a-disclosure[open] > summary::before {
       }
       sent++;
       if (bad) fail++; else { ok++; lats.push(lat); }
-      tbody.appendChild(row(i, key, status, lat, resp, bad));
+      tbody.appendChild(row(i, key, sentBody, status, lat, resp, bad));
       $("t-m-sent").textContent = sent;
       $("t-m-ok").textContent = ok;
       $("t-m-fail").textContent = fail;
       $("t-m-lat").textContent = median(lats);
+      if (bad && $("t-break").checked) break;
       if (i < count && delay && !stopped)
         await new Promise(function (res) { setTimeout(res, delay); });
     }
@@ -1461,6 +1528,29 @@ details.a-disclosure[open] > summary::before {
 
   $("t-send").addEventListener("click", sendAll);
   $("t-stop").addEventListener("click", function () { stopped = true; });
+
+  $("t-curl").addEventListener("click", function () {
+    var url = $("t-url").value.trim();
+    if (!/^https?:\/\//i.test(url)) { alert("Enter a valid http(s) target URL"); return; }
+    var extra;
+    try { extra = JSON.parse($("t-headers").value || "{}"); }
+    catch (e) { alert("Headers must be a JSON object"); return; }
+    var key = uuid();
+    var cmd = buildCurl(url, $("t-method").value, extra, $("t-body").value, 1, key);
+    $("t-curlbox").value = cmd;
+    if (navigator.clipboard) navigator.clipboard.writeText(cmd);
+  });
+
+  $("t-curl-import").addEventListener("click", function () {
+    var parsed = parseCurl($("t-curlbox").value.replace(/\\\n/g, " "));
+    if (!parsed.url) { alert("No URL found in that command"); return; }
+    $("t-url").value = parsed.url;
+    if (parsed.method) $("t-method").value = parsed.method;
+    else if (parsed.body) $("t-method").value = "POST";
+    $("t-headers").value = Object.keys(parsed.headers).length
+      ? JSON.stringify(parsed.headers, null, 2) : "";
+    if (parsed.body) $("t-body").value = parsed.body;
+  });
 })();
 </script>
 
