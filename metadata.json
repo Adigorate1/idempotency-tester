@@ -1,0 +1,5 @@
+{
+  "name": "Idempotency Bypass Tester",
+  "description": "A developer tool for testing and bypassing idempotency and deduplication layers on live HTTP APIs with unique keys, timestamps, and cache-busting identifiers.",
+  "version": "1.0.0"
+}

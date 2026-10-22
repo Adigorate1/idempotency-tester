@@ -1,60 +1,30 @@
-# Idempotency Bypass Tester
+# Idempotency Bypass Tester (React)
 
-A test tool for hammering your own live app when its idempotency/dedupe layer
-swallows your repeat test requests. Every request is made to look brand-new:
+A modern React application for testing, verifying, and bypassing idempotency and deduplication layers on live HTTP APIs and microservices.
 
-- Fresh UUID in `Idempotency-Key`, `X-Idempotency-Key`, `X-Request-Id`,
-  `X-Correlation-Id` and `Request-Id` headers (any fixed header you set that
-  collides is overwritten per request)
-- A `_cb=<uuid>` cache-busting query param on every call
-- `{{uuid}}`, `{{ts}}` (unix ms) and `{{n}}` (request number) placeholders in
-  your headers/body are substituted per request — use these if the app dedupes
-  on body content rather than a key header
-- Fire N requests with a configurable delay; per-call send time, status,
-  latency and response are shown in a results table
+Every request in a test batch is assigned fresh unique identifiers:
 
-## Two ways to run it
+- **5 Idempotency Headers**: Fresh UUID generated per call in `Idempotency-Key`, `X-Idempotency-Key`, `X-Request-Id`, `X-Correlation-Id`, and `Request-Id`. Any fixed colliding header is overwritten dynamically.
+- **Cache-Busting Query**: Automatic `_cb=<uuid>` query parameter appended to every request to defeat HTTP caches and proxy deduplication.
+- **Dynamic Placeholders**: `{{uuid}}` (fresh UUID), `{{ts}}` (Unix millisecond timestamp), `{{n}}` (request sequence index 1..N), and `{{iso}}` (ISO 8601 string) substituted in headers and body. Essential when backends deduplicate based on body fingerprints.
+- **Execution Modes**:
+  - **Server-Side Proxy**: Bypasses browser CORS restrictions, allowing you to test any API endpoint.
+  - **Direct Browser Fetch**: Fires requests directly from your browser.
+  - **Built-in Echo Server**: Fast in-memory endpoint (`/api/echo`) for testing idempotency behavior immediately.
+- **Breaking Point**: Stop the batch run on the first failed request (error or status ≥ 400).
+- **cURL Studio**: One-click **Copy as cURL** with all headers and parameters escaped, plus **Import cURL** to paste and parse commands from Chrome DevTools, Postman, or terminal into the form.
+- **Android Emulator Bridge**: One-click port forwarding (`adb forward`) to test apps running in Android Studio AVD, BlueStacks, Nox, LDPlayer, MEmu, or Genymotion without certificate issues.
+- **Detailed Audit & History**: Inspect full request headers, URL, resolved body, latency, and response status for every attempt. Export results to JSON or CSV.
 
-### `idempotency-tester.html` — zero install
-
-Open the file in any browser. Requests fire from your browser, so the target
-must allow cross-origin requests (`Access-Control-Allow-Origin`). Works great
-when your live app already permits CORS.
-
-### `app.py` — Python proxy (no CORS limits)
+## Development
 
 ```bash
-python3 app.py          # stdlib only, no installs
-# open http://127.0.0.1:8577
+# Install dependencies
+npm install
+
+# Start Vite dev server on port 3000
+npm run dev
+
+# Build production bundle
+npm run build
 ```
-
-The UI is served locally and requests are forwarded server-side, so CORS does
-not apply. Use this when your app blocks cross-origin browser calls.
-
-#### Testing an app in an Android emulator
-
-No certificate, proxy config, or manual port forwarding needed. With
-`adb` (Android platform-tools) on your PATH and an emulator running:
-
-1. In the **Emulator** section of `app.py`'s UI, enter the port your app
-   listens on inside the emulator (e.g. `8080`).
-2. Click **Connect & fill Target URL** — the tool runs `adb forward`
-   to a free localhost port and fills the Target URL automatically.
-3. Send requests as normal; they reach the emulator over plain HTTP.
-
-Works over HTTP only — a deliberate choice so no CA cert or app
-`network_security_config` changes are required.
-
-## Extra features
-
-- **Breaking point**: checkbox stops the run on the first failed request
-  (network error or status ≥ 400).
-- **Body sent column**: shows the exact resolved JSON body each POST sent.
-- **cURL import/export**: paste a `curl` command to auto-fill the form, or
-  click **Copy as cURL** to export the configured request with a fresh key.
-
-## Notes
-
-- Point it only at apps you own or are authorized to test.
-- If your app dedupes on a fingerprint of the body, put `{{uuid}}` in the body
-  template so each request body differs.
